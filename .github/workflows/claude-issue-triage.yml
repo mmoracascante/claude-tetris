@@ -1,0 +1,109 @@
+name: Claude Issue Triage
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+# Un solo triage por issue: si se edita varias veces seguidas, cancela el anterior.
+concurrency:
+  group: issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    # Evita bucles: no re-analizar si el evento lo disparó el propio bot,
+    # y en 'edited' solo actuar si cambió el cuerpo o el título del issue.
+    if: |
+      github.event.issue.pull_request == null &&
+      github.actor != 'github-actions[bot]' &&
+      (github.event.action != 'edited' ||
+       github.event.changes.body != null ||
+       github.event.changes.title != null)
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Triage issue with Claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh label list:*),Bash(gh search issues:*),Read,Grep,Glob"'
+          prompt: |
+            Eres el triador de issues del repositorio ${{ github.repository }}, un Tetris en
+            JavaScript vanilla (sin build, sin dependencias): `index.html`, `style.css`, `game.js`.
+            Lee `CLAUDE.md` para entender la arquitectura antes de opinar.
+
+            Issue a analizar: #${{ github.event.issue.number }}
+            Léelo con: `gh issue view ${{ github.event.issue.number }} --json title,body,labels,comments`
+
+            ## Tarea 1 — Etiquetar
+            1. Obtén las etiquetas existentes con `gh label list`.
+            2. Elige SOLO etiquetas que ya existan. No crees etiquetas nuevas.
+            3. Aplícalas con:
+               `gh issue edit ${{ github.event.issue.number }} --add-label "etiqueta1,etiqueta2"`
+            4. Criterio:
+               - `bug`: comportamiento roto o incorrecto del juego.
+               - `enhancement`: funcionalidad nueva o mejora de una existente.
+               - `documentation`: cambios en README/CLAUDE.md/comentarios.
+               - `question`: piden información, no un cambio de código.
+               - `duplicate`: ya existe otro issue igual (verifica con `gh search issues`).
+               - `invalid`: sin información suficiente o fuera del alcance del repo.
+               - `good first issue`: cambio localizado, de bajo riesgo, en un solo archivo.
+               - `help wanted`: requiere decisión de diseño o contexto que no está en el repo.
+            5. Máximo 3 etiquetas. Si ninguna encaja, no pongas ninguna.
+
+            ## Tarea 2 — Diagnóstico
+            Publica UN comentario con `gh issue comment ${{ github.event.issue.number }} --body "..."`.
+            El comentario es la base sobre la que después se implementará la solución, así que debe
+            ser concreto y verificable contra el código real. Usa esta plantilla exacta:
+
+            ```
+            ## 🔍 Diagnóstico automático
+
+            **Tipo:** <bug | mejora | documentación | pregunta>
+            **Etiquetas aplicadas:** <lista>
+            **Complejidad estimada:** <trivial | baja | media | alta>
+
+            ### Resumen
+            <2-3 frases: qué pide o qué falla el issue.>
+
+            ### Causa probable / punto de intervención
+            <Cita archivos y funciones concretas con formato `game.js:123` (`nombreFuncion`).
+            Si es un bug, explica el mecanismo del fallo. Si no puedes localizarlo en el
+            código, dilo explícitamente en vez de inventar.>
+
+            ### Archivos afectados
+            - `archivo` — qué cambia y por qué
+
+            ### Plan de implementación propuesto
+            1. <paso concreto>
+            2. <paso concreto>
+
+            ### Riesgos y acoplamientos
+            <Efectos colaterales: p.ej. COLORS/PIECES están alineados por índice; cambiar
+            COLS/ROWS/BLOCK obliga a actualizar width/height del canvas en index.html;
+            `collide()` es la única puerta de colisión.>
+
+            ### Verificación manual
+            <Pasos en el navegador para confirmar que quedó resuelto.>
+
+            ### Información faltante
+            <Qué hace falta preguntar al autor, o "ninguna".>
+            ```
+
+            Reglas:
+            - Escribe todo en español.
+            - Si ya existe un comentario tuyo con "## 🔍 Diagnóstico automático", NO publiques
+              otro: edítalo con `gh issue comment --edit-last` para mantener un solo diagnóstico.
+            - No modifiques código ni abras PRs. Solo etiquetar y diagnosticar.
