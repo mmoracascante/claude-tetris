@@ -136,6 +136,7 @@ function softDrop() {
 }
 
 function lockPiece() {
+  if (gameOver) return;
   merge();
   clearLines();
   spawn();
@@ -146,6 +147,7 @@ function spawn() {
   next = randomPiece();
   if (collide(current.shape, current.x, current.y)) {
     endGame();
+    return;
   }
   drawNext();
 }
@@ -219,6 +221,7 @@ function drawNext() {
 }
 
 function endGame() {
+  if (gameOver) return;
   gameOver = true;
   cancelAnimationFrame(animId);
   overlayTitle.textContent = 'GAME OVER';
@@ -241,6 +244,8 @@ function togglePause() {
 }
 
 function loop(ts) {
+  // a queued frame can still fire after the game ends or pauses — bail out
+  if (gameOver || paused) return;
   const dt = ts - lastTime;
   lastTime = ts;
   dropAccum += dt;
@@ -252,6 +257,8 @@ function loop(ts) {
       lockPiece();
     }
   }
+  // lockPiece may have ended the game — paint the final board and stop
+  if (gameOver) { draw(); return; }
   draw();
   animId = requestAnimationFrame(loop);
 }
